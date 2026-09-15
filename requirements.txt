@@ -1,0 +1,6 @@
+# portwatch 运行依赖
+# 安装: pip install -r requirements.txt
+
+psutil>=5.9          # 端口与进程信息采集（采集层）
+fastapi>=0.115       # API 层
+uvicorn>=0.30        # ASGI 服务器（Windows 上不要装 uvicorn[standard]，uvloop 不支持 Windows）
