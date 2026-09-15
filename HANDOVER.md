@@ -13,11 +13,11 @@
 | 项 | 内容 |
 |---|---|
 | 项目根目录 | `<项目根>` |
-| 代码规模 | 后端 3 个 Python 文件（`collector.py` 313 行 / `server.py` 452 行 / `history.py` 720 行）+ 前端 14 个 TS/CSS 文件 |
+| 代码规模 | 后端 3 个 Python 文件（`collector.py` 313 行 / `server.py` 452 行 / `history.py` 720 行）+ 前端 14 个 TS/CSS 文件 + 测试 3 个文件（16 个用例） |
 | 技术栈 | Python 3.11（psutil + FastAPI + uvicorn + sqlite3）、React 19 + Vite + TypeScript |
 | 当前状态 | 可运行。后端已在 `127.0.0.1:8787` 常驻运行（撰写本文时 `/api/health` 返回 `status: ok`、`cycles: 937`），前端 dev server 配置为 `127.0.0.1:5173` |
 | 历史库现状 | `history.db` 约 5.6 MB：`port_event` 7154 行（added 3583 / removed 3571 / changed 0）、`port_occupancy` 3388 行（开区间 16 / `observed_removed` 3337 / `reconciled` 35） |
-| 交付物 | 本文档 + 仓库本身（含 `README.md`，README 侧重"设计说明"，本文侧重"接手操作 + 隐性知识 + 缺陷清单"，两者互补） |
+| 交付物 | 本文档 + 仓库本身（含 `README.md`、`tests/` 冒烟测试与 CI 配置；README 侧重"设计说明"，本文侧重"接手操作 + 隐性知识 + 缺陷清单"，两者互补） |
 
 ### 阅读顺序建议
 
@@ -167,11 +167,20 @@ curl "http://127.0.0.1:8787/api/ports?access=partial"
 
 # 4) SSE（首帧 snapshot，之后 delta/心跳；Ctrl+C 退出）
 curl -N http://127.0.0.1:8787/api/stream
+
+# 5) 自动化冒烟：三层契约（16 个用例，不需要管理员权限；受限时采集层用例如实 skip）
+pip install -r requirements-dev.txt
+python -m pytest tests -q
 ```
 
 **端到端验证历史层**（强烈建议每改一次历史层就跑，做法见附录 C）：起一个独立的监听进程占端口 →
 看 `port_event` 出现 `added`、`port_occupancy` 出现开区间 → 关掉监听 → 看 `removed` 与闭合区间 →
-强杀 portwatch 服务再重启 → 看对账把残留开区间标 `reconciled`。这条链路比写单测可信得多。
+强杀 portwatch 服务再重启 → 看对账把残留开区间标 `reconciled`。
+
+> **单测与端到端的分工**（两者不能互相替代，改动采集层 / 历史层时都要跑）：
+> `tests/` 钉**契约与不变量**——快照结构、diff 语义、`last_seen_at` 必须被心跳推进、
+> `port_event` 只由真实观测追加、心跳与对账不凭空造区间；跑得快、可在 CI 上跨平台回归。
+> 附录 C 的链路则证明**真实链路真的通**：真进程、真端口、真落库、真对账。
 
 ### 2.6 常见问题速查
 
@@ -196,6 +205,13 @@ portwatch/
 ├─ requirements.txt         后端依赖（注意末行非注释标注，见 6.4）
 ├─ README.md                项目说明：架构速览、运行方式、历史层设计、时间语义、已知限制（98 行）
 ├─ .gitignore               已覆盖 history.db* / *.db-wal / ports.json / __pycache__ / node_modules 等（50 行）
+├─ LICENSE                  MIT
+├─ conftest.py              把仓库根插进 sys.path，让测试能直接 import 三个模块
+├─ requirements-dev.txt     测试依赖（-r requirements.txt + pytest）
+├─ tests/                   冒烟测试：采集层契约 / API 层 diff 语义 / 历史层三条设计纪律（跑法见 2.5）
+├─ tools/listener.py        验证用小工具：起一个真实监听进程，复现「新增 → 消失」全链路
+├─ docs/                    README 用的真实运行截图与动图（本机用户名已脱敏）
+├─ .github/workflows/tests.yml  CI：ubuntu + windows × py3.11 / 3.13 跑 pytest
 ├─ ports.json               采集层 `--json` 单跑产物（历史快照，117 KB，已被 .gitignore 忽略）
 ├─ history.db (+ -wal/-shm) 历史库（运行时生成，WAL 模式；已被 .gitignore 忽略）
 ├─ __pycache__/             Python 字节码缓存（已忽略）
@@ -779,6 +795,7 @@ udp:57676:2936:2026-09-10T07:38:58  first=13:27:13  last=16:53:23  ended=16:53:2
 - [ ] 起一个测试监听端口（见附录 C），页面看到进入动画与时间线 `added`；关掉后看到 `removed`
 - [ ] `python history.py --dump` 能看到上述端口的 `added` / `removed` 事件与已闭合区间，且 `last_seen_at` 在占用期间**持续前进**
 - [ ] 强杀服务再重启，`/api/health` 与 `--dump` 能看到残留区间被标 `reconciled`
+- [ ] `python -m pytest tests -q` 全绿（权限受限环境里采集层用例会如实 skip，不算失败）
 - [ ] 读懂第 5 章每一条，能向别人解释"为什么事件表只由 delta 写入"
 - [ ] 读完第 6 章，能说清 6.1（PID 复用漏检）的爆炸半径与 6.4（依赖安装坑）的规避方式
 
@@ -845,7 +862,9 @@ idx_occ_pid_first(pid, first_seen_at)
 idx_occ_open(ended_at) WHERE ended_at IS NULL     -- 部分索引
 ```
 
-## 附录 C：端到端验证方法（"独立监听进程法"，实测可信度远高于单测）
+## 附录 C：端到端验证方法（"独立监听进程法"）
+
+> 与 `tests/` 的分工见 2.5：单测钉契约，本附录钉真实链路。
 
 ```python
 # temp/listener.py —— 起一个真实监听进程模拟端口占用
