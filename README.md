@@ -1,5 +1,7 @@
 # portwatch
 
+![tests](https://github.com/joker1point/portwatch/actions/workflows/tests.yml/badge.svg)
+
 把「本机哪个端口被哪个进程占了」从 `netstat` 的一行 `IP:PORT`，变成一条**可追溯的归因链路**，并把每次占用的出现 / 消失留档成**可回溯的历史**。
 
 ![实时演示](docs/demo.gif)
@@ -77,6 +79,24 @@ python tools/listener.py 8899
 # 4) 排障：打印库内事件与区间摘要
 python history.py --dump
 ```
+
+## 测试
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q
+```
+
+16 个用例，分三类契约（都不依赖管理员权限）：
+
+| 文件 | 钉住的东西 |
+|---|---|
+| `tests/test_collector.py` | 快照 schema（`portwatch/v1`）与统计口径自洽、字段取值域；**自己起的监听端口必须被归因到自己**（端口 → PID → 进程的链路真的通） |
+| `tests/test_server.py` | 身份键格式、可处置性的保守判定、diff 语义（只有 `WATCH_FIELDS` 变化才算 `changed`；`removed` 只回身份信息） |
+| `tests/test_history.py` | 三条设计纪律：`last_seen_at` 必须被心跳推进、`port_event` 只由真实观测追加（心跳与对账都不许写事件表）、心跳与对账不会凭空造区间 |
+
+> 采集层测试在权限受限的环境下会**如实 skip**（拿不到全局连接表时跳过，而不是假装通过）。
+> 端到端验证（起一个真实监听端口，看事件、区间与对账）见 `tools/listener.py` 与 `HANDOVER.md` 附录 C —— 那条链路比单测更接近真实场景。
 
 ## 架构
 
