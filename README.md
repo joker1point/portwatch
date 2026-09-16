@@ -124,6 +124,18 @@ psutil.net_connections(kind="inet")
    前端 usePortStream：snapshot 灌全量 → delta 局部增删改 + 推时间线 → heartbeat 标记存活
 ```
 
+**为什么推增量（delta）而不是全量**：156 个监听条目若每 2 秒整份推送，前端要不停重灌全量、历史层每小时要写二十多万行；而实际 delta 通常只有 **0–3 条**。所以前端只对变化的条目做局部更新（`set` / `delete` + 时间线追加），历史层只把**真正发生的变化**写成事件——事件表才可能当"信任锚"用，而不是一坨噪音。
+
+diff 的语义（`server.py: compute_delta`，身份键 `proto:port:pid`）：
+
+| 数组 | 判定 |
+|---|---|
+| `added` | 本轮有、上轮没有；条目补上 `key` / `protected` 后完整发出 |
+| `removed` | 上轮有、本轮没有，**只回身份信息** `{key, port, proto, pid, process}`——进程都没了，完整归因链路没有意义 |
+| `changed` | 两轮都有，但 `WATCH_FIELDS`（进程名 / exe / 命令行 / 工作目录 / 父 PID / 权限）任一变化；**监听地址变化刻意不产生 changed** |
+
+三个容易踩的语义边界：**首轮不产 delta**（否则开机的全部端口会被当成"新增"刷屏）；身份键不含 `create_time`，PID 复用会漏检（见「已知限制」）；`ts` 是**观测时刻**，一次 diff 只能把变化定位在 `(上一轮采样时刻, 本轮采样时刻]` 这个区间内。
+
 **HTTP 接口**（均为 GET、无鉴权、仅本机可访问）：
 
 | 路径 | 参数 | 返回要点 |
